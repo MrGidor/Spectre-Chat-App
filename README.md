@@ -110,6 +110,7 @@ Inside the client TUI:
 | `/createserver <name>` | Create a new server and receive invite code |
 | `/join <code>` | Join a server using an invite code |
 | `/createchannel <name>` | Create a channel in current server target |
+| `/removechannel <name>` | Removes a channel in the current server target |
 | `/channel <name>` | Switch active channel within the current server |
 
 ---
