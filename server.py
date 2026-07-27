@@ -227,6 +227,18 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     await writer.drain()
 
                 else:
+                    # check if server exists
+                    cur.execute("SELECT 1 FROM servers WHERE code = ?", (target,))
+                    if not cur.fetchone():
+                        conn.close()
+                        writer.write(json.dumps({
+                            "status": "error", 
+                            "msg": "[-] Server not found."
+                        }).encode() + b'\n')
+                        await writer.drain()
+                        continue
+
+                    ## check if member
                     cur.execute(
                         "SELECT 1 FROM server_members WHERE server_code = ? AND username = ?", 
                         (target, username)
