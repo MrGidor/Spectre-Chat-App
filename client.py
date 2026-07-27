@@ -89,13 +89,13 @@ class SetupScreen(Screen):
         except ValueError:
             port = 8888
             
-        if not username or username == "":
+        if not username:
             return  
 
-        if not host or host == "":
+        if not host:
             return
 
-        if not port_str or port_str == "":
+        if not port_str:
             port_str = "8888"
 
         save_config(username, host, port)
@@ -139,6 +139,23 @@ class SpectreClient(App):
         yield Input(placeholder="Type message or /command...", id="input_box")
         yield Footer()
 
+    async def send_json(self, payload: dict) -> bool:
+        """Safely sends JSON over the socket without crashing the UI on dropped connections."""
+        if not self.writer or self.writer.is_closing():
+            log = self.query_one(RichLog)
+            log.write("[bold red]Not connected to server.[/bold red]")
+            return False
+        try:
+            self.writer.write(json.dumps(payload).encode() + b'\n')
+            await self.writer.drain()
+            return True
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            log = self.query_one(RichLog)
+            log.write(f"[bold red]Connection lost: {e}[/bold red]")
+            if self.writer:
+                self.writer.close()
+            return False
+
     async def on_mount(self) -> None:
         config = load_config()
         if config is None:
@@ -155,15 +172,13 @@ class SpectreClient(App):
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=ssl_ctx)
             conn_payload = {"action": "connect", "username": self.username, "token": self.token}
-            self.writer.write(json.dumps(conn_payload).encode() + b'\n')
-            await self.writer.drain()
+            
+            if await self.send_json(conn_payload):
+                log.write("[dim]Commands: /list | /target <@user/user/code> | /addfriend @user | /createserver <name> | /join <code> | /channel <name>[/dim]\n")
+                asyncio.create_task(self.listen_server())
 
-            log.write("[dim]Commands: /list | /target <@user/user/code> | /addfriend @user | /createserver <name> | /join <code> | /channel <name>[/dim]\n")
-            asyncio.create_task(self.listen_server())
-
-            await asyncio.sleep(0.2)
-            self.writer.write(json.dumps({"action": "list_all"}).encode() + b'\n')
-            await self.writer.drain()
+                await asyncio.sleep(0.2)
+                await self.send_json({"action": "list_all"})
         except Exception as e:
             log.write(f"[bold red]Connection error: {e}[/bold red]")
 
@@ -193,8 +208,7 @@ class SpectreClient(App):
             "target": self.active_target,
             "channel": self.active_channel
         }
-        self.writer.write(json.dumps(req).encode() + b'\n')
-        await self.writer.drain()
+        await self.send_json(req)
 
     async def listen_server(self):
         log = self.query_one(RichLog)
@@ -204,12 +218,12 @@ class SpectreClient(App):
             try:
                 line = await self.reader.readline()
                 if not line:
+                    log.write("[bold red]Server closed the connection.[/bold red]")
                     break
                 data = json.loads(line.decode().strip())
                 
                 if data.get("status") == "error":
                     log.write(f"[bold red]{data['msg']}[/bold red]")
-                    break
                 elif "msg" in data:
                     log.write(f"[bold yellow]{data['msg']}[/bold yellow]")
 
@@ -222,7 +236,7 @@ class SpectreClient(App):
                         bar.styles.display = "none"
 
                 elif data.get("type") == "history_response":
-                    log.clear()  # FIX: Clear screen before printing fetched history
+                    log.clear()
                     ttype = data["target_type"]
                     tgt = data["target"]
                     chn = data["channel"]
@@ -245,10 +259,8 @@ class SpectreClient(App):
                     content = data["content"]
                     if self.is_dm and self.active_target == sender:
                         log.write(f"[bold yellow]@{sender}:[/bold yellow] {content}")
-                        # FIX: Mark read without triggering a full re-render/fetch_history
                         req = {"action": "mark_read", "target": sender}
-                        self.writer.write(json.dumps(req).encode() + b'\n')
-                        await self.writer.drain()
+                        await self.send_json(req)
 
                 elif data.get("type") == "server_msg":
                     scode = data["server_code"]
@@ -260,7 +272,6 @@ class SpectreClient(App):
                         if sender == self.username:
                             log.write(f"[bold green]You:[/bold green] {escape(content)}")
                         else:
-                            # Clean markup formatting + escaping
                             log.write(f"[bold cyan]@{escape(sender)}:[/bold cyan] {escape(content)}")
 
                 elif data.get("type") == "list_response":
@@ -272,7 +283,8 @@ class SpectreClient(App):
                         log.write(f"• @{fr}")
                     log.write("\n[dim]To target: /target @username OR /target server_code[/dim]\n")
 
-            except Exception:
+            except Exception as e:
+                log.write(f"[bold red]Listener encountered an error: {e}[/bold red]")
                 break
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -288,30 +300,18 @@ class SpectreClient(App):
             cmd = parts[0].lower()
 
             if cmd == "/list":
-                req = {"action": "list_all"}
-                self.writer.write(json.dumps(req).encode() + b'\n')
-                await self.writer.drain()
+                await self.send_json({"action": "list_all"})
             elif cmd == "/addfriend" and len(parts) > 1:
-                req = {"action": "add_friend", "target": parts[1]}
-                self.writer.write(json.dumps(req).encode() + b'\n')
-                await self.writer.drain()
+                await self.send_json({"action": "add_friend", "target": parts[1]})
             elif cmd == "/createserver" and len(parts) > 1:
-                req = {"action": "create_server", "name": parts[1]}
-                self.writer.write(json.dumps(req).encode() + b'\n')
-                await self.writer.drain()
+                await self.send_json({"action": "create_server", "name": parts[1]})
             elif cmd == "/join" and len(parts) > 1:
-                req = {"action": "join_server", "code": parts[1]}
-                self.writer.write(json.dumps(req).encode() + b'\n')
-                await self.writer.drain()
-                self.is_dm = False
-                await self.switch_target(parts[1])
+                await self.send_json({"action": "join_server", "code": parts[1]})
             elif cmd == "/createchannel" and len(parts) > 1:
                 if self.is_dm or not self.active_target:
                     log.write("[bold red]Target a server first.[/bold red]")
                     return
-                req = {"action": "create_channel", "code": self.active_target, "channel": parts[1]}
-                self.writer.write(json.dumps(req).encode() + b'\n')
-                await self.writer.drain()
+                await self.send_json({"action": "create_channel", "code": self.active_target, "channel": parts[1]})
             elif cmd == "/channel" and len(parts) > 1:
                 if self.is_dm:
                     log.write("[bold red]Cannot switch channels in a DM.[/bold red]")
@@ -320,10 +320,7 @@ class SpectreClient(App):
                 await self.switch_target(self.active_target)
             elif cmd == "/target" and len(parts) > 1:
                 target_arg = parts[1]
-                if target_arg.startswith("@"):
-                    self.is_dm = True
-                else:
-                    self.is_dm = False
+                self.is_dm = target_arg.startswith("@")
                 await self.switch_target(target_arg)
             else:
                 log.write("[bold red]Unknown command.[/bold red]")
@@ -344,8 +341,7 @@ class SpectreClient(App):
                     "content": text
                 }
 
-            self.writer.write(json.dumps(req).encode() + b'\n')
-            await self.writer.drain()
+            await self.send_json(req)
 
 if __name__ == "__main__":
     app = SpectreClient()
