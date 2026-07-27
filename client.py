@@ -312,6 +312,24 @@ class SpectreClient(App):
                     log.write("[bold red]Target a server first.[/bold red]")
                     return
                 await self.send_json({"action": "create_channel", "code": self.active_target, "channel": parts[1]})
+            
+            elif cmd in ("/deletechannel", "/removechannel") and len(parts) > 1:
+                if self.is_dm or not self.active_target:
+                    log.write("[bold red]Target a server first.[/bold red]")
+                    return
+                
+                target_channel = parts[1].lstrip('#')
+                if target_channel == "general":
+                    log.write("[bold red]Cannot delete the default #general channel.[/bold red]")
+                    return
+
+                await self.send_json({
+                    "action": "remove_channel", 
+                    "code": self.active_target, 
+                    "channel": target_channel
+                })
+            # ------------------------------------------
+
             elif cmd == "/channel" and len(parts) > 1:
                 if self.is_dm:
                     log.write("[bold red]Cannot switch channels in a DM.[/bold red]")

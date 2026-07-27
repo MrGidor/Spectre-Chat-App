@@ -213,7 +213,47 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                             ORDER BY id DESC LIMIT 100
                         ) ORDER BY id ASC
                     """, (username, target, target, username))
+                    
+                    history = [{"from": r[0], "content": r[1]} for r in cur.fetchall()]
+                    conn.close()
+
+                    writer.write(json.dumps({
+                        "type": "history_response",
+                        "target": target,
+                        "target_type": target_type,
+                        "channel": channel,
+                        "history": history
+                    }).encode() + b'\n')
+                    await writer.drain()
+
                 else:
+                    cur.execute(
+                        "SELECT 1 FROM server_members WHERE server_code = ? AND username = ?", 
+                        (target, username)
+                    )
+                    if not cur.fetchone():
+                        conn.close()
+                        writer.write(json.dumps({
+                            "status": "error", 
+                            "msg": "[-] Access denied: You are not a member of this server."
+                        }).encode() + b'\n')
+                        await writer.drain()
+                        continue
+
+                    # Verify channel exists in that server
+                    cur.execute(
+                        "SELECT 1 FROM channels WHERE server_code = ? AND channel_name = ?", 
+                        (target, channel)
+                    )
+                    if not cur.fetchone():
+                        conn.close()
+                        writer.write(json.dumps({
+                            "status": "error", 
+                            "msg": f"[-] Channel #{channel} does not exist on this server."
+                        }).encode() + b'\n')
+                        await writer.drain()
+                        continue
+
                     cur.execute("""
                         SELECT sender, content FROM (
                             SELECT id, sender, content FROM messages 
@@ -222,17 +262,18 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         ) ORDER BY id ASC
                     """, (target, channel))
 
-                history = [{"from": r[0], "content": r[1]} for r in cur.fetchall()]
-                conn.close()
+                    history = [{"from": r[0], "content": r[1]} for r in cur.fetchall()]
+                    conn.close()
 
-                writer.write(json.dumps({
-                    "type": "history_response",
-                    "target": target,
-                    "target_type": target_type,
-                    "channel": channel,
-                    "history": history
-                }).encode() + b'\n')
-                await writer.drain()
+                    writer.write(json.dumps({
+                        "type": "history_response",
+                        "target": target,
+                        "target_type": target_type,
+                        "channel": channel,
+                        "history": history
+                    }).encode() + b'\n')
+                    await writer.drain()
+
                 await send_unread_notifications(username)
 
             elif action == "mark_read":
@@ -293,13 +334,78 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             elif action == "create_channel":
                 code = payload["code"]
                 ch_name = payload["channel"].lstrip('#')
+
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
+
+                # Verify that the requester is the server owner
+                cur.execute("SELECT owner FROM servers WHERE code = ?", (code,))
+                row = cur.fetchone()
+
+                if not row:
+                    conn.close()
+                    writer.write(json.dumps({"status": "error", "msg": "[-] Server not found."}).encode() + b'\n')
+                    await writer.drain()
+                    continue
+
+                if row[0] != username:
+                    conn.close()
+                    writer.write(json.dumps({"status": "error", "msg": "[-] Only the server owner can create channels."}).encode() + b'\n')
+                    await writer.drain()
+                    continue
+
+                # Proceed to create channel
                 cur.execute("INSERT OR IGNORE INTO channels (server_code, channel_name) VALUES (?, ?)", (code, ch_name))
                 conn.commit()
                 conn.close()
 
                 writer.write(json.dumps({"status": "info", "msg": f"[+] Created channel #{ch_name}"}).encode() + b'\n')
+                await writer.drain()
+
+            elif action == "remove_channel":
+                code = payload["code"]
+                ch_name = payload["channel"].lstrip('#')
+
+                # Prevent deletion of the default fallback channel
+                if ch_name == "general":
+                    writer.write(json.dumps({
+                        "status": "error", 
+                        "msg": "[-] Cannot delete the default #general channel."
+                    }).encode() + b'\n')
+                    await writer.drain()
+                    continue
+
+                conn = sqlite3.connect("chat_data.db")
+                cur = conn.cursor()
+
+                cur.execute("SELECT owner FROM servers WHERE code = ?", (code,))
+                row = cur.fetchone()
+
+                if not row:
+                    conn.close()
+                    writer.write(json.dumps({"status": "error", "msg": "[-] Server not found."}).encode() + b'\n')
+                    await writer.drain()
+                    continue
+
+                if row[0] != username:
+                    conn.close()
+                    writer.write(json.dumps({"status": "error", "msg": "[-] Only the server owner can remove channels."}).encode() + b'\n')
+                    await writer.drain()
+                    continue
+
+                cur.execute("SELECT 1 FROM channels WHERE server_code = ? AND channel_name = ?", (code, ch_name))
+                if not cur.fetchone():
+                    conn.close()
+                    writer.write(json.dumps({"status": "error", "msg": f"[-] Channel #{ch_name} does not exist."}).encode() + b'\n')
+                    await writer.drain()
+                    continue
+
+                cur.execute("DELETE FROM channels WHERE server_code = ? AND channel_name = ?", (code, ch_name))
+                cur.execute("DELETE FROM messages WHERE msg_type = 'server' AND target = ? AND channel = ?", (code, ch_name))
+                conn.commit()
+                conn.close()
+
+                writer.write(json.dumps({"status": "info", "msg": f"[+] Channel #{ch_name} and its message history were deleted."}).encode() + b'\n')
                 await writer.drain()
 
             elif action == "send_dm":
