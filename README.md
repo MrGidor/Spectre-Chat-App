@@ -114,6 +114,7 @@ Inside the client TUI:
 | `/channel <name>` | Switch active channel within the current server |
 
 | Useful Hotkeys | Description |
+| --- | --- |
 | `shift+dragclick` | Text selection |
 | `shift+ctrl+c` | Copy selected text |
 | `shift+ctrl+v` | Paste clipboard text |
