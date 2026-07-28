@@ -113,6 +113,11 @@ Inside the client TUI:
 | `/removechannel <name>` | Removes a channel in the current server target |
 | `/channel <name>` | Switch active channel within the current server |
 
+| Useful Hotkeys | Description |
+| `shift+dragclick` | Text selection |
+| `shift+ctrl+c` | Copy selected text |
+| `shift+ctrl+v` | Paste clipboard text |
+| `ctrl+q` | Exit Spectre |
 ---
 
 ## 🛡️ Security & Privacy Notice
