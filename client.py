@@ -4,12 +4,20 @@ import os
 import uuid
 from textual.app import App, ComposeResult
 from textual.screen import Screen
+import sys
 from textual.widgets import Header, Footer, Input, RichLog, Static, Button
 import ssl
 from rich.markup import escape
 
-IDENTITY_FILE = "identity.json"
-CONFIG_FILE = "config.json"
+def get_base_dir():
+    """Gets the directory where the binary or script is located."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir()
+IDENTITY_FILE = os.path.join(BASE_DIR, "identity.json")
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
 ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 ssl_ctx.check_hostname = False
@@ -160,6 +168,13 @@ class SpectreClient(App):
             if self.writer:
                 self.writer.close()
             return False
+
+    async def action_quit(self) -> None:
+        """Safely close writer connection before quitting Textual."""
+        if self.writer and not self.writer.is_closing():
+            self.writer.close()
+            await self.writer.wait_closed()
+        self.exit()
 
     async def on_mount(self) -> None:
         
