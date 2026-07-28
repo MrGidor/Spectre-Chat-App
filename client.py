@@ -4,6 +4,7 @@ import os
 import uuid
 from textual.app import App, ComposeResult
 from textual.screen import Screen
+import sys
 from textual.widgets import Header, Footer, Input, RichLog, Static, Button
 import ssl
 from rich.markup import escape

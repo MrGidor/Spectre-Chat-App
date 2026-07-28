@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 import ssl
 import subprocess
+import sys
 from typing import Dict
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,7 +32,7 @@ def ensure_tls_certs():
             "-subj", "/CN=localhost"
         ]
         subprocess.run(cmd, check=True, env=get_clean_env())
-        
+
 ensure_tls_certs()
 
 # 3. Initialize SSL Context safely
