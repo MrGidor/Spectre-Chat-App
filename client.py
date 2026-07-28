@@ -1,13 +1,14 @@
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
+import ssl
+import sys
 import uuid
+from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.screen import Screen
-import sys
-from textual.widgets import Header, Footer, Input, RichLog, Static, Button
-import ssl
-from rich.markup import escape
+from textual.widgets import Button, Footer, Header, Input, RichLog, Static
 
 def get_base_dir():
     """Gets the directory where the binary or script is located."""
@@ -45,6 +46,34 @@ def load_config():
 def save_config(username, host, port):
     with open(CONFIG_FILE, "w") as f:
         json.dump({"username": username, "host": host, "port": port}, f)
+
+def format_timestamp(ts_str: str | None) -> str:
+    """Parses ISO timestamp string and formats it dynamically based on the current date and year."""
+    if not ts_str:
+        return "[dim][1970-01-01 00:00][/dim]"
+    
+    try:
+        # Handle ISO strings ending in Z or standard ISO offset formats
+        if ts_str.endswith("Z"):
+            ts_str = ts_str[:-1] + "+00:00"
+        
+        dt_utc = datetime.fromisoformat(ts_str)
+        dt_local = dt_utc.astimezone()
+        now_local = datetime.now()
+        
+        if dt_local.date() == now_local.date():
+            # Same day: "Today HH:MM"
+            time_formatted = f"Today {dt_local.strftime('%H:%M')}"
+        elif dt_local.year == now_local.year:
+            # Same year, different day: "MM-DD HH:MM"
+            time_formatted = dt_local.strftime("%m-%d %H:%M")
+        else:
+            # Different year: "YYYY-MM-DD HH:MM"
+            time_formatted = dt_local.strftime("%Y-%m-%d %H:%M")
+            
+        return f"[dim][{time_formatted}][/dim]"
+    except Exception:
+        return "[dim][1970-01-01 00:00][/dim]"
 
 class SetupScreen(Screen):
     CSS = """
@@ -97,11 +126,8 @@ class SetupScreen(Screen):
         except ValueError:
             port = 8888
             
-        if not username:
+        if not username or not host:
             return  
-
-        if not host:
-            return
 
         if not port_str:
             port_str = "8888"
@@ -129,7 +155,6 @@ class SpectreClient(App):
     Footer {
         display: none;
     }
-    
     """
 
     def __init__(self, username=None, host="127.0.0.1", port=8888):
@@ -177,9 +202,6 @@ class SpectreClient(App):
         self.exit()
 
     async def on_mount(self) -> None:
-        
-        self.screen.styles.user_select = "text"
-
         config = load_config()
         if config is None:
             self.push_screen(SetupScreen(), self.on_setup_complete)
@@ -272,16 +294,20 @@ class SpectreClient(App):
                     for msg in data["history"]:
                         sender = msg["from"]
                         content = msg["content"]
+                        ts_fmt = format_timestamp(msg.get("timestamp"))
+                        
                         if sender == self.username:
-                            log.write(f"[bold green]You:[/bold green] {content}")
+                            log.write(f"{ts_fmt} [bold green]You:[/bold green] {escape(content)}")
                         else:
-                            log.write(f"[bold yellow]@{sender}:[/bold yellow] {content}")
+                            log.write(f"{ts_fmt} [bold yellow]@{escape(sender)}:[/bold yellow] {escape(content)}")
 
                 elif data.get("type") == "dm":
                     sender = data["from"]
                     content = data["content"]
+                    ts_fmt = format_timestamp(data.get("timestamp"))
+                    
                     if self.is_dm and self.active_target == sender:
-                        log.write(f"[bold yellow]@{sender}:[/bold yellow] {content}")
+                        log.write(f"{ts_fmt} [bold yellow]@{escape(sender)}:[/bold yellow] {escape(content)}")
                         req = {"action": "mark_read", "target": sender}
                         await self.send_json(req)
 
@@ -290,20 +316,21 @@ class SpectreClient(App):
                     channel = data["channel"]
                     sender = data["from"]
                     content = data["content"]
+                    ts_fmt = format_timestamp(data.get("timestamp"))
                     
                     if not self.is_dm and self.active_target == scode and self.active_channel == channel:
                         if sender == self.username:
-                            log.write(f"[bold green]You:[/bold green] {escape(content)}")
+                            log.write(f"{ts_fmt} [bold green]You:[/bold green] {escape(content)}")
                         else:
-                            log.write(f"[bold cyan]@{escape(sender)}:[/bold cyan] {escape(content)}")
+                            log.write(f"{ts_fmt} [bold cyan]@{escape(sender)}:[/bold cyan] {escape(content)}")
 
                 elif data.get("type") == "list_response":
                     log.write("\n[bold underline yellow]=== YOUR SERVERS ===[/bold underline yellow]")
                     for srv in data["servers"]:
-                        log.write(f"• [bold green]{srv['name']}[/bold green] (Code: [bold cyan]{srv['code']}[/bold cyan]) | Channels: #{', #'.join(srv['channels'])}")
+                        log.write(f"• [bold green]{escape(srv['name'])}[/bold green] (Code: [bold cyan]{srv['code']}[/bold cyan]) | Channels: #{', #'.join(srv['channels'])}")
                     log.write("\n[bold underline yellow]=== YOUR FRIENDS ===[/bold underline yellow]")
                     for fr in data["friends"]:
-                        log.write(f"• @{fr}")
+                        log.write(f"• @{escape(fr)}")
                     log.write("\n[dim]To target: /target @username OR /target server_code[/dim]\n")
 
             except Exception as e:
@@ -322,7 +349,7 @@ class SpectreClient(App):
             parts = text.split(maxsplit=2)
             cmd = parts[0].lower()
             if cmd == "/help":
-                log.write("Command List: \n-/help\n-/list\n-/addfirend <@user>\n-/createserver <server_name>\n-/join <server code>\n-/createchannel <channel name>\n-/removechannel <channel name>\n-/channel <target channel>\n-/target <@username / server code>")
+                log.write("Command List: \n-/help\n-/list\n-/addfriend <@user>\n-/createserver <server_name>\n-/join <server code>\n-/createchannel <channel name>\n-/removechannel <channel name>\n-/channel <target channel>\n-/target <@username / server code>")
                 return
             elif cmd == "/list":
                 await self.send_json({"action": "list_all"})
@@ -353,7 +380,6 @@ class SpectreClient(App):
                     "code": self.active_target, 
                     "channel": target_channel
                 })
-            # ------------------------------------------
 
             elif cmd == "/channel" and len(parts) > 1:
                 if self.is_dm:
@@ -373,9 +399,11 @@ class SpectreClient(App):
                 log.write("[bold red]No target set! Run /list and /target <user/code>[/bold red]")
                 return
 
+            now_ts = format_timestamp(datetime.now(timezone.utc).isoformat())
+
             if self.is_dm:
                 req = {"action": "send_dm", "target": self.active_target, "content": text}
-                log.write(f"[bold green]You:[/bold green] {text}")
+                log.write(f"{now_ts} [bold green]You:[/bold green] {escape(text)}")
             else:
                 req = {
                     "action": "server_msg", 

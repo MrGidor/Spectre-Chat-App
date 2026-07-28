@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
 import secrets
@@ -35,9 +36,13 @@ def ensure_tls_certs():
 
 ensure_tls_certs()
 
-# 3. Initialize SSL Context safely
+# Initialize SSL Context safely
 ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ssl_ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
+
+def get_utc_timestamp() -> str:
+    """Returns ISO-formatted UTC timestamp string."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 def init_db():
     conn = sqlite3.connect("chat_data.db")
@@ -104,6 +109,13 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
+    # Backwards compatibility migration check: ensure 'timestamp' column exists
+    cur.execute("PRAGMA table_info(messages)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "timestamp" not in columns:
+        cur.execute("ALTER TABLE messages ADD COLUMN timestamp DATETIME DEFAULT CURRENT_TIMESTAMP")
+
     conn.commit()
     conn.close()
 
@@ -214,15 +226,18 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     conn.commit()
 
                     cur.execute("""
-                        SELECT sender, content FROM (
-                            SELECT id, sender, content FROM messages 
+                        SELECT sender, content, COALESCE(timestamp, '1970-01-01T00:00:00Z') FROM (
+                            SELECT id, sender, content, timestamp FROM messages 
                             WHERE msg_type = 'dm' AND 
                             ((sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?))
                             ORDER BY id DESC LIMIT 100
                         ) ORDER BY id ASC
                     """, (username, target, target, username))
                     
-                    history = [{"from": r[0], "content": r[1]} for r in cur.fetchall()]
+                    history = [
+                        {"from": r[0], "content": r[1], "timestamp": r[2]} 
+                        for r in cur.fetchall()
+                    ]
                     conn.close()
 
                     writer.write(json.dumps({
@@ -235,7 +250,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     await writer.drain()
 
                 else:
-                    # check if server exists
+                    # Check if server exists
                     cur.execute("SELECT 1 FROM servers WHERE code = ?", (target,))
                     if not cur.fetchone():
                         conn.close()
@@ -246,7 +261,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         await writer.drain()
                         continue
 
-                    ## check if member
+                    # Check if member
                     cur.execute(
                         "SELECT 1 FROM server_members WHERE server_code = ? AND username = ?", 
                         (target, username)
@@ -275,14 +290,17 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         continue
 
                     cur.execute("""
-                        SELECT sender, content FROM (
-                            SELECT id, sender, content FROM messages 
+                        SELECT sender, content, COALESCE(timestamp, '1970-01-01T00:00:00Z') FROM (
+                            SELECT id, sender, content, timestamp FROM messages 
                             WHERE msg_type = 'server' AND target = ? AND channel = ?
                             ORDER BY id DESC LIMIT 100
                         ) ORDER BY id ASC
                     """, (target, channel))
 
-                    history = [{"from": r[0], "content": r[1]} for r in cur.fetchall()]
+                    history = [
+                        {"from": r[0], "content": r[1], "timestamp": r[2]} 
+                        for r in cur.fetchall()
+                    ]
                     conn.close()
 
                     writer.write(json.dumps({
@@ -358,7 +376,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
 
-                # Verify that the requester is the server owner
                 cur.execute("SELECT owner FROM servers WHERE code = ?", (code,))
                 row = cur.fetchone()
 
@@ -374,7 +391,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     await writer.drain()
                     continue
 
-                # Proceed to create channel
                 cur.execute("INSERT OR IGNORE INTO channels (server_code, channel_name) VALUES (?, ?)", (code, ch_name))
                 conn.commit()
                 conn.close()
@@ -386,7 +402,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 code = payload["code"]
                 ch_name = payload["channel"].lstrip('#')
 
-                # Prevent deletion of the default fallback channel
                 if ch_name == "general":
                     writer.write(json.dumps({
                         "status": "error", 
@@ -431,19 +446,25 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             elif action == "send_dm":
                 target = payload["target"].lstrip('@')
                 content = payload["content"]
+                now = get_utc_timestamp()
 
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
                 cur.execute("""
-                    INSERT INTO messages (msg_type, target, sender, recipient, content, is_read)
-                    VALUES ('dm', ?, ?, ?, ?, 0)
-                """, (target, username, target, content))
+                    INSERT INTO messages (msg_type, target, sender, recipient, content, is_read, timestamp)
+                    VALUES ('dm', ?, ?, ?, ?, 0, ?)
+                """, (target, username, target, content, now))
                 conn.commit()
                 conn.close()
 
                 if target in ACTIVE_USERS:
                     t_writer = ACTIVE_USERS[target]["writer"]
-                    out = json.dumps({"type": "dm", "from": username, "content": content}) + "\n"
+                    out = json.dumps({
+                        "type": "dm", 
+                        "from": username, 
+                        "content": content,
+                        "timestamp": now
+                    }) + "\n"
                     t_writer.write(out.encode())
                     await t_writer.drain()
                     await send_unread_notifications(target)
@@ -452,6 +473,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 code = payload["code"]
                 channel = payload["channel"].lstrip('#')
                 content = payload["content"]
+                now = get_utc_timestamp()
 
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
@@ -461,9 +483,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 if srv:
                     sname = srv[0]
                     cur.execute("""
-                        INSERT INTO messages (msg_type, target, channel, sender, content, is_read)
-                        VALUES ('server', ?, ?, ?, ?, 1)
-                    """, (code, channel, username, content))
+                        INSERT INTO messages (msg_type, target, channel, sender, content, is_read, timestamp)
+                        VALUES ('server', ?, ?, ?, ?, 1, ?)
+                    """, (code, channel, username, content, now))
                     conn.commit()
 
                     cur.execute("SELECT username FROM server_members WHERE server_code = ?", (code,))
@@ -475,7 +497,8 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         "server": sname,
                         "channel": channel,
                         "from": username,
-                        "content": content
+                        "content": content,
+                        "timestamp": now
                     }) + "\n"
 
                     for member in members:
