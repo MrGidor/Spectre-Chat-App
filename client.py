@@ -118,6 +118,10 @@ class SpectreClient(App):
     #input_box {
         dock: bottom;
     }
+    Footer {
+        display: none;
+    }
+    
     """
 
     def __init__(self, username=None, host="127.0.0.1", port=8888):
@@ -130,12 +134,13 @@ class SpectreClient(App):
         self.writer = None
         self.active_target = None
         self.is_dm = False
+        self.ENABLE_COMMANDS_PALETTE = False
         self.active_channel = "general"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static("", id="unread_bar")
-        yield RichLog(id="chat_log", wrap=True, highlight=True, markup=True)
+        yield RichLog(id="chat_log", wrap=True, highlight=True, markup=True, auto_scroll=True)
         yield Input(placeholder="Type message or /command...", id="input_box")
         yield Footer()
 
@@ -157,6 +162,9 @@ class SpectreClient(App):
             return False
 
     async def on_mount(self) -> None:
+        
+        self.screen.styles.user_select = "text"
+
         config = load_config()
         if config is None:
             self.push_screen(SetupScreen(), self.on_setup_complete)
@@ -174,7 +182,7 @@ class SpectreClient(App):
             conn_payload = {"action": "connect", "username": self.username, "token": self.token}
             
             if await self.send_json(conn_payload):
-                log.write("[dim]Commands: /list | /target <@user/user/code> | /addfriend @user | /createserver <name> | /join <code> | /channel <name>[/dim]\n")
+                log.write("[dim]For a list of commands do: /help | To exit Spectre hit ctrl+q[/dim]\n")
                 asyncio.create_task(self.listen_server())
 
                 await asyncio.sleep(0.2)
@@ -298,8 +306,10 @@ class SpectreClient(App):
         if text.startswith("/"):
             parts = text.split(maxsplit=2)
             cmd = parts[0].lower()
-
-            if cmd == "/list":
+            if cmd == "/help":
+                log.write("Command List: \n-/help\n-/list\n-/addfirend <@user>\n-/createserver <server_name>\n-/join <server code>\n-/createchannel <channel name>\n-/removechannel <channel name>\n-/channel <target channel>\n-/target <@username / server code>")
+                return
+            elif cmd == "/list":
                 await self.send_json({"action": "list_all"})
             elif cmd == "/addfriend" and len(parts) > 1:
                 await self.send_json({"action": "add_friend", "target": parts[1]})
