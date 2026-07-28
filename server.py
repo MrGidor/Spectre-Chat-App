@@ -7,12 +7,19 @@ import ssl
 import subprocess
 from typing import Dict
 
-# 1. Define certificate file paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_FILE = os.path.join(BASE_DIR, "server.crt")
 KEY_FILE = os.path.join(BASE_DIR, "server.key")
 
-# 2. Ensure TLS certificates exist BEFORE creating SSL Context
+def get_clean_env():
+    """Remove PyInstaller's library overrides so subprocess calls use system shared libs."""
+    env = dict(os.environ)
+    if "LD_LIBRARY_PATH_ORIG" in env:
+        env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
+
 def ensure_tls_certs():
     """Generates self-signed TLS certificates if they don't exist."""
     if not os.path.exists(CERT_FILE) or not os.path.exists(KEY_FILE):
@@ -23,8 +30,8 @@ def ensure_tls_certs():
             "-days", "365", "-nodes",
             "-subj", "/CN=localhost"
         ]
-        subprocess.run(cmd, check=True)
-
+        subprocess.run(cmd, check=True, env=get_clean_env())
+        
 ensure_tls_certs()
 
 # 3. Initialize SSL Context safely
