@@ -237,15 +237,17 @@ class SpectreClient(App):
         self.port = port
         asyncio.create_task(self.connect_to_server())
 
-    async def switch_target(self, target_str: str):
+    async def switch_target(self, target_str: str, channel: str | None = None):
         clean_target = target_str.lstrip('@')
         
-        if target_str.startswith("@") or self.is_dm:
+        if target_str.startswith("@"):
             self.is_dm = True
             self.active_target = clean_target
         else:
             self.is_dm = False
             self.active_target = clean_target
+
+            self.active_channel = channel if channel else "general"
         
         req = {
             "action": "fetch_history",
@@ -285,6 +287,9 @@ class SpectreClient(App):
                     ttype = data["target_type"]
                     tgt = data["target"]
                     chn = data["channel"]
+                    
+                    if ttype == "server":
+                        self.active_channel = chn
                     
                     if ttype == "dm":
                         log.write(f"[bold underline magenta]=== Chatting with @{tgt} ===[/bold underline magenta]")
@@ -382,11 +387,20 @@ class SpectreClient(App):
                 })
 
             elif cmd == "/channel" and len(parts) > 1:
-                if self.is_dm:
-                    log.write("[bold red]Cannot switch channels in a DM.[/bold red]")
+                if self.is_dm or not self.active_target:
+                    log.write("[bold red]Cannot switch channels in a DM or without a server targeted.[/bold red]")
                     return
-                self.active_channel = parts[1].lstrip('#')
-                await self.switch_target(self.active_target)
+                
+                requested_channel = parts[1].lstrip('#')
+                
+                req = {
+                    "action": "fetch_history",
+                    "target_type": "server",
+                    "target": self.active_target,
+                    "channel": requested_channel
+                }
+                await self.send_json(req)
+
             elif cmd == "/target" and len(parts) > 1:
                 target_arg = parts[1]
                 self.is_dm = target_arg.startswith("@")
