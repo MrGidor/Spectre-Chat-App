@@ -53,7 +53,7 @@ jobs:
           name: server-assets-${{ matrix.os }}
           path: server-assets/*
 
-  # ==========================================
+# ==========================================
   # BUILD CLIENT EXECUTABLE
   # ==========================================
   build-client:
@@ -89,7 +89,12 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then
             mv dist/spectre-client.exe client-assets/spectre-client-windows-amd64.exe
           else
-            mv dist/spectre-client client-assets/spectre-client-linux-amd64
+            # Ensure binaries and launcher script have executable permissions
+            chmod +x dist/spectre-client launch-client.sh
+            mv dist/spectre-client spectre-client-linux-amd64
+            
+            # Compress binary and launcher script into a single release zip
+            zip -j client-assets/spectre-client-linux-amd64.zip spectre-client-linux-amd64 launch-client.sh
           fi
 
       - name: Upload Client Artifacts
