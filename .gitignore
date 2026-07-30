@@ -4,3 +4,4 @@ server.crt
 identity.json
 chat_data.db
 config.json
+server_config.json

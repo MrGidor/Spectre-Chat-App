@@ -12,6 +12,37 @@ from typing import Dict
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_FILE = os.path.join(BASE_DIR, "server.crt")
 KEY_FILE = os.path.join(BASE_DIR, "server.key")
+CONFIG_FILE = os.path.join(BASE_DIR, "server_config.json")
+
+def load_or_create_config() -> dict:
+    """Loads configuration from config.json, or creates it with defaults if missing."""
+    default_config = {
+        "host": "0.0.0.0",
+        "port": 8888
+    }
+    
+    if not os.path.exists(CONFIG_FILE):
+        print(f"[+] Generating default configuration file at '{CONFIG_FILE}'...")
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(default_config, f, indent=4)
+        except Exception as e:
+            print(f"[-] Failed to create config file: {e}")
+        return default_config
+
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            # Ensure essential keys exist
+            for key, val in default_config.items():
+                if key not in config:
+                    config[key] = val
+            return config
+    except Exception as e:
+        print(f"[-] Error reading '{CONFIG_FILE}', falling back to defaults: {e}")
+        return default_config
+
+CONFIG = load_or_create_config()
 
 def get_clean_env():
     """Remove PyInstaller's library overrides so subprocess calls use system shared libs."""
@@ -515,8 +546,11 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             del ACTIVE_USERS[username]
 
 async def main():
-    server = await asyncio.start_server(handle_client, '0.0.0.0', 8888, ssl=ssl_ctx)
-    print("Encrypted Spectre Community server online on port 8888...")
+    host = CONFIG.get("host", "0.0.0.0")
+    port = CONFIG.get("port", 8888)
+
+    server = await asyncio.start_server(handle_client, host, port, ssl=ssl_ctx)
+    print(f"Encrypted Spectre Community server online on {host}:{port}...")
     async with server:
         await server.serve_forever()
 
