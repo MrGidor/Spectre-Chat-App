@@ -4,6 +4,7 @@ import json
 import os
 import ssl
 import sys
+import hashlib
 import uuid
 from rich.markup import escape
 from textual.app import App, ComposeResult
@@ -22,7 +23,27 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
 ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 ssl_ctx.check_hostname = False
-ssl_ctx.verify_mode = ssl.CERT_NONE  # Ignore self-signed cert checks in dev
+ssl_ctx.verify_mode = ssl.CERT_NONE  # Certificate validation handled via SHA-256 fingerprinting
+ 
+def verify_server_fingerprint(writer: asyncio.StreamWriter, expected_fp: str | None) -> tuple[bool, str]:
+    """Extracts peer SSL certificate and compares its SHA-256 fingerprint against expected configuration."""
+    if writer is None:
+        return False, "StreamWriter is not initialized."
+
+    ssl_obj = writer.get_extra_info('ssl_object')
+    if not ssl_obj:
+        return False, "Failed to inspect underlying SSL connection."
+    
+    der_cert = ssl_obj.getpeercert(binary_form=True)
+    cert_fp = hashlib.sha256(der_cert).hexdigest()
+    
+    if expected_fp is None:
+        return True, cert_fp  # First-time connection anchor
+    
+    if cert_fp != expected_fp:
+        return False, cert_fp
+    
+    return True, cert_fp
 
 def get_or_create_identity():
     if os.path.exists(IDENTITY_FILE):
@@ -43,9 +64,12 @@ def load_config():
             return None
     return None
 
-def save_config(username, host, port):
+def save_config(username, host, port, cert_fingerprint=None):
+    config = {"username": username, "host": host, "port": port}
+    if cert_fingerprint:
+        config["cert_fingerprint"] = cert_fingerprint
     with open(CONFIG_FILE, "w") as f:
-        json.dump({"username": username, "host": host, "port": port}, f)
+        json.dump(config, f, indent=4)
 
 def format_timestamp(ts_str: str | None) -> str:
     """Parses ISO timestamp string and formats it dynamically based on the current date and year."""
@@ -216,6 +240,21 @@ class SpectreClient(App):
         log = self.query_one(RichLog)
         try:
             self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=ssl_ctx)
+
+            config = load_config() or {}
+            saved_fp = config.get("cert_fingerprint")
+            
+            valid, current_fp = verify_server_fingerprint(self.writer, saved_fp)
+            if not valid:
+                log.write("[bold red][CRITICAL] TLS Security Alert: Server certificate fingerprint mismatch![/bold red]")
+                log.write("[red]Connection aborted to prevent potential Man-in-the-Middle attack.[/red]")
+                self.writer.close()
+                return
+            
+            if saved_fp != current_fp:
+                save_config(self.username, self.host, self.port, cert_fingerprint=current_fp)
+                log.write(f"[dim green]Anchored server TLS fingerprint: {current_fp[:16]}...[/dim green]")
+
             conn_payload = {"action": "connect", "username": self.username, "token": self.token}
             
             if await self.send_json(conn_payload):
@@ -267,7 +306,7 @@ class SpectreClient(App):
                 if not line:
                     log.write("[bold red]Server closed the connection.[/bold red]")
                     break
-                
+
                 try:
                     data = json.loads(line.decode('utf-8').strip())
                 except (json.JSONDecodeError, UnicodeDecodeError) as err:
@@ -418,10 +457,9 @@ class SpectreClient(App):
                 log.write("[bold red]No target set! Run /list and /target <user/code>[/bold red]")
                 return
 
-            now_ts = format_timestamp(datetime.now(timezone.utc).isoformat())
-
             if self.is_dm:
                 req = {"action": "send_dm", "target": self.active_target, "content": text}
+                now_ts = format_timestamp(datetime.now(timezone.utc).isoformat())
                 log.write(f"{now_ts} [bold green]You:[/bold green] {escape(text)}")
             else:
                 req = {
