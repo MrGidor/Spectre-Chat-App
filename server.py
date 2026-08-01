@@ -541,11 +541,20 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         "timestamp": now
                     }) + "\n"
 
-                    for member in members:
-                        if member in ACTIVE_USERS:
-                            m_writer = ACTIVE_USERS[member]["writer"]
+                    async def send_to_member(m_writer):
+                        try:
                             m_writer.write(out.encode())
                             await m_writer.drain()
+                        except Exception as e:
+                            print(f"[-] Failed sending message to user: {e}")
+
+                    tasks = [
+                        send_to_member(ACTIVE_USERS[member]["writer"])
+                        for member in members if member in ACTIVE_USERS
+                    ]
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                        
                 conn.close()
 
     except Exception:
