@@ -150,6 +150,7 @@ Inside the client TUI:
 Spectre uses explicit protocol version matching (`MAJOR.MINOR`):
 * **Major Version Mismatch (`2.x` vs `1.x`):** The server will reject connections with `PROTOCOL_MISMATCH`. This enforces mandatory security updates across both server and client software.
 * **Minor Version Updates:** Backward-compatible feature additions or non-breaking protocol enhancements.
+* **Release Versioning vs. Protocol Versioning:** Application release versions (`v1.4`) and protocol versions (`2.0`) are decoupled. The release version tracks application updates, while the protocol version strictly enforces network compatibility and security boundaries.
 
 ---
 
