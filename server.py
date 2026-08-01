@@ -78,7 +78,9 @@ def get_utc_timestamp() -> str:
 def init_db():
     conn = sqlite3.connect("chat_data.db")
     cur = conn.cursor()
-    
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA foreign_keys=ON;")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -140,8 +142,10 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
-    # Backwards compatibility migration check: ensure 'timestamp' column exists
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_lookup ON messages(msg_type, target, channel);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);")
+
     cur.execute("PRAGMA table_info(messages)")
     columns = [row[1] for row in cur.fetchall()]
     if "timestamp" not in columns:
@@ -191,11 +195,16 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     username = None
     try:
         while True:
-            raw_data = await reader.read(8192)
-            if not raw_data:
+            line = await reader.readline()
+            if not line:
                 break
             
-            payload = json.loads(raw_data.decode('utf-8'))
+            try:
+                payload = json.loads(line.decode('utf-8').strip())
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                print(f"[-] Invalid payload received from client: {err}")
+                continue
+            
             action = payload.get("action")
 
             if action == "connect":
@@ -243,8 +252,14 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
             elif action == "fetch_history":
                 target_type = payload.get("target_type")
-                target = payload.get("target").lstrip('@')
-                channel = payload.get("channel", "general").lstrip('#')
+                
+                # Safely handle target stripping
+                raw_target = payload.get("target") or ""
+                target = raw_target.lstrip('@')
+                
+                # Safely handle channel stripping when channel is None
+                raw_channel = payload.get("channel") or "general"
+                channel = raw_channel.lstrip('#')
 
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
@@ -346,7 +361,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 await send_unread_notifications(username)
 
             elif action == "mark_read":
-                target = payload.get("target").lstrip('@')
+                raw_target = payload.get("target") or ""
+                target = raw_target.lstrip('@')
+                
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
                 cur.execute("""
@@ -532,18 +549,29 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         "timestamp": now
                     }) + "\n"
 
-                    for member in members:
-                        if member in ACTIVE_USERS:
-                            m_writer = ACTIVE_USERS[member]["writer"]
+                    async def send_to_member(m_writer):
+                        try:
                             m_writer.write(out.encode())
                             await m_writer.drain()
+                        except Exception as e:
+                            print(f"[-] Failed sending message to user: {e}")
+
+                    tasks = [
+                        send_to_member(ACTIVE_USERS[member]["writer"])
+                        for member in members if member in ACTIVE_USERS
+                    ]
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+
                 conn.close()
 
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[-] Client connection error ({username or 'unauthenticated'}): {exc}", file=sys.stderr)
     finally:
         if username and username in ACTIVE_USERS:
             del ACTIVE_USERS[username]
+        writer.close()
+        await writer.wait_closed()
 
 async def main():
     host = CONFIG.get("host", "0.0.0.0")
