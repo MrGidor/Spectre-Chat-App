@@ -157,6 +157,22 @@ def init_db():
 
 init_db()
 
+import hashlib
+
+def get_cert_fingerprint(cert_path: str) -> str | None:
+    """Reads the cert file and calculates its SHA-256 fingerprint in hex."""
+    if not os.path.exists(cert_path):
+        return None
+    try:
+        with open(cert_path, "rb") as f:
+            cert_bytes = f.read()
+
+        der_bytes = ssl.PEM_cert_to_DER_cert(cert_bytes.decode('utf-8'))
+        return hashlib.sha256(der_bytes).hexdigest()
+    except Exception as e:
+        print(f"[-] Could not parse TLS fingerprint: {e}")
+        return None
+
 ACTIVE_USERS: Dict[str, dict] = {}
 
 def check_or_claim_username(username: str, token: str) -> tuple[bool, str]:
@@ -593,8 +609,17 @@ async def main():
     host = CONFIG.get("host", "0.0.0.0")
     port = CONFIG.get("port", 8888)
 
+    fingerprint = get_cert_fingerprint(CERT_FILE)
+
     server = await asyncio.start_server(handle_client, host, port, ssl=ssl_ctx)
-    print(f"Encrypted Spectre Community server online on {host}:{port}...")
+    
+    print("=" * 70)
+    print(f"[*] Encrypted Spectre Community server online on {host}:{port}")
+    if fingerprint:
+        print(f"[*] SHA-256 Fingerprint: {fingerprint}")
+        print("[*] Share this fingerprint out-of-band with clients for initial trust.")
+    print("=" * 70)
+
     async with server:
         await server.serve_forever()
 
