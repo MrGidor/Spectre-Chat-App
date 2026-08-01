@@ -13,6 +13,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_FILE = os.path.join(BASE_DIR, "server.crt")
 KEY_FILE = os.path.join(BASE_DIR, "server.key")
 CONFIG_FILE = os.path.join(BASE_DIR, "server_config.json")
+SERVER_PROTOCOL_VERSION = "1.1"
 
 def load_or_create_config() -> dict:
     """Loads configuration from config.json, or creates it with defaults if missing."""
@@ -208,6 +209,21 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             action = payload.get("action")
 
             if action == "connect":
+                client_proto = payload.get("protocol_version", "1.0")
+
+                server_major = SERVER_PROTOCOL_VERSION.split(".")[0]
+                client_major = str(client_proto).split(".")[0]
+
+                if client_major != server_major:
+                    err_msg = f"[-] Outdated protocol version ({client_proto}). Server requires {server_major}.x"
+                    writer.write(json.dumps({
+                        "status": "error", 
+                        "code": "PROTOCOL_MISMATCH",
+                        "msg": err_msg
+                    }).encode() + b'\n')
+                    await writer.drain()
+                    return
+
                 req_uname = payload["username"]
                 token = payload["token"]
                 success, msg = check_or_claim_username(req_uname, token)

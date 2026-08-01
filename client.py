@@ -20,6 +20,7 @@ def get_base_dir():
 BASE_DIR = get_base_dir()
 IDENTITY_FILE = os.path.join(BASE_DIR, "identity.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+CLIENT_PROTOCOL_VERSION = "1.1"
 
 ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 ssl_ctx.check_hostname = False
@@ -255,14 +256,16 @@ class SpectreClient(App):
                 save_config(self.username, self.host, self.port, cert_fingerprint=current_fp)
                 log.write(f"[dim green]Anchored server TLS fingerprint: {current_fp[:16]}...[/dim green]")
 
-            conn_payload = {"action": "connect", "username": self.username, "token": self.token}
+            conn_payload = {
+                "action": "connect", 
+                "username": self.username, 
+                "token": self.token, 
+                "protocol_version": CLIENT_PROTOCOL_VERSION
+            }
             
             if await self.send_json(conn_payload):
-                log.write("[dim]For a list of commands do: /help | To exit Spectre hit ctrl+q[/dim]\n")
                 asyncio.create_task(self.listen_server())
-
-                await asyncio.sleep(0.2)
-                await self.send_json({"action": "list_all"})
+    
         except Exception as e:
             log.write(f"[bold red]Connection error: {e}[/bold red]")
 
@@ -307,6 +310,14 @@ class SpectreClient(App):
                 
                 if data.get("status") == "error":
                     log.write(f"[bold red]{data['msg']}[/bold red]")
+
+                elif data.get("status") == "ok":
+                    log.write(f"[bold green]{data['msg']}[/bold green]")
+                    log.write("[dim]For a list of commands do: /help | To exit Spectre hit ctrl+q[/dim]")
+                    
+                    # Connection is officially verified, fetch initial state
+                    await self.send_json({"action": "list_all"})
+
                 elif "msg" in data:
                     log.write(f"[bold yellow]{data['msg']}[/bold yellow]")
 
