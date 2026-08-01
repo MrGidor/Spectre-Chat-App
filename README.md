@@ -2,7 +2,13 @@
 # Spectre Chat Application
 
 A lightweight, terminal-based real-time chat platform built with Python, Textual, `asyncio`, and SQLite. Features DM channels, server communities, persistent chat logs, unread notifications, and TLS transport encryption.
-<img width="1091" height="547" alt="kép" src="https://github.com/user-attachments/assets/c2e3bf7e-baaf-4d77-96dc-ee704218d260" />
+<img width="1396" height="759" alt="kép" src="https://github.com/user-attachments/assets/ee10a9e6-74a3-41f4-ad5e-46edc0197e9a" />
+
+**Chatting in a server**<br>
+<img width="397" height="130" alt="kép" src="https://github.com/user-attachments/assets/07b4e533-9ffe-43bc-b43a-c963fc0b1338" /><br>
+**Chatting with an user**<br>
+<img width="284" height="101" alt="kép" src="https://github.com/user-attachments/assets/0d175216-5dbb-4059-8433-f43f344ec58d" />
+
 
 ---
 
