@@ -78,7 +78,9 @@ def get_utc_timestamp() -> str:
 def init_db():
     conn = sqlite3.connect("chat_data.db")
     cur = conn.cursor()
-    
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA foreign_keys=ON;")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -140,8 +142,10 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
-    # Backwards compatibility migration check: ensure 'timestamp' column exists
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_lookup ON messages(msg_type, target, channel);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);")
+
     cur.execute("PRAGMA table_info(messages)")
     columns = [row[1] for row in cur.fetchall()]
     if "timestamp" not in columns:
@@ -191,11 +195,16 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     username = None
     try:
         while True:
-            raw_data = await reader.read(8192)
-            if not raw_data:
+            line = await reader.readline()
+            if not line:
                 break
             
-            payload = json.loads(raw_data.decode('utf-8'))
+            try:
+                payload = json.loads(line.decode('utf-8').strip())
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                print(f"[-] Invalid payload received from client: {err}")
+                continue
+            
             action = payload.get("action")
 
             if action == "connect":
