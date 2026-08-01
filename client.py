@@ -276,23 +276,15 @@ class SpectreClient(App):
         self.port = port
         asyncio.create_task(self.connect_to_server())
 
-    async def switch_target(self, target_str: str, channel: str | None = None):
+    async def switch_target(self, target_str: str):
+        is_dm = target_str.startswith("@")
         clean_target = target_str.lstrip('@')
-        
-        if target_str.startswith("@"):
-            self.is_dm = True
-            self.active_target = clean_target
-        else:
-            self.is_dm = False
-            self.active_target = clean_target
-
-            self.active_channel = channel if channel else "general"
         
         req = {
             "action": "fetch_history",
-            "target_type": "dm" if self.is_dm else "server",
-            "target": self.active_target,
-            "channel": self.active_channel
+            "target_type": "dm" if is_dm else "server",
+            "target": clean_target,
+            "channel": "general" if not is_dm else None
         }
         await self.send_json(req)
 
@@ -330,8 +322,11 @@ class SpectreClient(App):
                     log.clear()
                     ttype = data["target_type"]
                     tgt = data["target"]
-                    chn = data["channel"]
+                    chn = data.get("channel")
                     
+                    # State update ONLY on valid server confirmation
+                    self.is_dm = (ttype == "dm")
+                    self.active_target = tgt
                     if ttype == "server":
                         self.active_channel = chn
                     
@@ -446,9 +441,7 @@ class SpectreClient(App):
                 await self.send_json(req)
 
             elif cmd == "/target" and len(parts) > 1:
-                target_arg = parts[1]
-                self.is_dm = target_arg.startswith("@")
-                await self.switch_target(target_arg)
+                await self.switch_target(parts[1])
             else:
                 log.write("[bold red]Unknown command.[/bold red]")
 

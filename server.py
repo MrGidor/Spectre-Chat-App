@@ -252,8 +252,14 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
             elif action == "fetch_history":
                 target_type = payload.get("target_type")
-                target = payload.get("target").lstrip('@')
-                channel = payload.get("channel", "general").lstrip('#')
+                
+                # Safely handle target stripping
+                raw_target = payload.get("target") or ""
+                target = raw_target.lstrip('@')
+                
+                # Safely handle channel stripping when channel is None
+                raw_channel = payload.get("channel") or "general"
+                channel = raw_channel.lstrip('#')
 
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
@@ -355,7 +361,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 await send_unread_notifications(username)
 
             elif action == "mark_read":
-                target = payload.get("target").lstrip('@')
+                raw_target = payload.get("target") or ""
+                target = raw_target.lstrip('@')
+                
                 conn = sqlite3.connect("chat_data.db")
                 cur = conn.cursor()
                 cur.execute("""
