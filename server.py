@@ -13,7 +13,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_FILE = os.path.join(BASE_DIR, "server.crt")
 KEY_FILE = os.path.join(BASE_DIR, "server.key")
 CONFIG_FILE = os.path.join(BASE_DIR, "server_config.json")
-SERVER_PROTOCOL_VERSION = "1.1"
+SERVER_PROTOCOL_VERSION = "2.0"
 
 def load_or_create_config() -> dict:
     """Loads configuration from config.json, or creates it with defaults if missing."""

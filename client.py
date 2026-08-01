@@ -21,7 +21,7 @@ def get_base_dir():
 BASE_DIR = get_base_dir()
 IDENTITY_FILE = os.path.join(BASE_DIR, "identity.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
-CLIENT_PROTOCOL_VERSION = "1.1"
+CLIENT_PROTOCOL_VERSION = "2.0"
 
 ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 ssl_ctx.check_hostname = False
