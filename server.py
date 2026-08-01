@@ -554,14 +554,16 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     ]
                     if tasks:
                         await asyncio.gather(*tasks, return_exceptions=True)
-                        
+
                 conn.close()
 
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[-] Client connection error ({username or 'unauthenticated'}): {exc}", file=sys.stderr)
     finally:
         if username and username in ACTIVE_USERS:
             del ACTIVE_USERS[username]
+        writer.close()
+        await writer.wait_closed()
 
 async def main():
     host = CONFIG.get("host", "0.0.0.0")
