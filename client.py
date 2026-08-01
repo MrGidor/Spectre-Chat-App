@@ -267,7 +267,12 @@ class SpectreClient(App):
                 if not line:
                     log.write("[bold red]Server closed the connection.[/bold red]")
                     break
-                data = json.loads(line.decode().strip())
+                
+                try:
+                    data = json.loads(line.decode('utf-8').strip())
+                except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                    log.write(f"[dim red]Dropped malformed server frame: {err}[/dim red]")
+                    continue
                 
                 if data.get("status") == "error":
                     log.write(f"[bold red]{data['msg']}[/bold red]")
